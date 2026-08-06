@@ -14,6 +14,7 @@ import (
 	"crypto/rand"
 	"flag"
 	"fmt"
+	"math"
 	"math/big"
 	"os"
 )
@@ -69,13 +70,49 @@ func generate(length int, charset string) string {
 	return string(out)
 }
 
-// strength 给密码估个粗略强度（只按长度+字符种类，仅供直观参考，不是严谨评分）。
-func strength(pw string, kinds int) string {
-	entropy := len(pw) * kinds // 粗略的"可能组合数"对数近似
+// generateGuaranteed 生成一条密码，并保证其中包含每一个"字符类"至少 1 个字符。
+// classes 是各个字符类的字符集合（如小写、大写、数字、符号），charset 是它们拼起来的全集。
+// 做法：先从每个类里随机取一个放进前 len(classes) 位，其余位置从全集中随机取，
+// 最后把整串打乱，保证"每类至少出现一次"又不暴露哪几位是从特定类取的。
+func generateGuaranteed(length int, charset string, classes []string) string {
+	if length <= 0 {
+		return ""
+	}
+	if length < len(classes) {
+		// 长度不够放下所有类，退化为普通随机生成（少数字符类场景）。
+		return generate(length, charset)
+	}
+	out := make([]byte, 0, length)
+	for _, c := range classes {
+		out = append(out, c[randomIndex(len(c))])
+	}
+	for len(out) < length {
+		out = append(out, charset[randomIndex(len(charset))])
+	}
+	// Fisher–Yates 原地打乱，使用 crypto/rand 取交换下标。
+	for i := len(out) - 1; i > 0; i-- {
+		j := randomIndex(i + 1)
+		out[i], out[j] = out[j], out[i]
+	}
+	return string(out)
+}
+
+// entropyBits 估算密码的信息熵（位）：长度 × log2(字符集大小)。
+// 这才是"真实强度"的近似——比如 16 位、62 个字符集 ≈ 95.3 位。
+func entropyBits(pw, charset string) float64 {
+	if len(charset) <= 1 {
+		return 0
+	}
+	return float64(len(pw)) * math.Log2(float64(len(charset)))
+}
+
+// strength 给密码估个粗略强度（按真实熵位估算，仅供直观参考，不是严谨评分）。
+func strength(pw string, charset string) string {
+	bits := entropyBits(pw, charset)
 	switch {
-	case entropy >= 60:
+	case bits >= 60:
 		return "强"
-	case entropy >= 36:
+	case bits >= 36:
 		return "中"
 	default:
 		return "弱"
@@ -96,21 +133,19 @@ func main() {
 
 	// 处理"只要数字"这个快捷开关。
 	var charset string
-	var kinds int
+	var classes []string // 需要"每类至少出现一次"的字符类
 	if *onlyDigits {
 		charset = digits
-		kinds = 1
+		classes = []string{digits}
 	} else {
 		useUpper := !*noUpper
 		charset = buildCharset(useUpper, true, true, symbolsOn)
-		kinds = 0
-		if !*noUpper {
-			kinds++
+		classes = []string{lower, digits}
+		if useUpper {
+			classes = append(classes, upper)
 		}
-		kinds++ // 小写
-		kinds++ // 数字
 		if symbolsOn {
-			kinds++
+			classes = append(classes, symbols)
 		}
 	}
 
@@ -120,7 +155,7 @@ func main() {
 	}
 
 	for i := 0; i < *count; i++ {
-		pw := generate(*lenFlag, charset)
-		fmt.Printf("%s  [%s]\n", pw, strength(pw, kinds))
+		pw := generateGuaranteed(*lenFlag, charset, classes)
+		fmt.Printf("%s  [%s, %.1f bits]\n", pw, strength(pw, charset), entropyBits(pw, charset))
 	}
 }
