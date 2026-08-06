@@ -12,6 +12,10 @@ go run . -len 24 -count 5
 go run . -no-upper       # 不要大写
 go run . -no-symbols     # 不要符号
 go run . -only-digits    # 只出数字（验证码）
+go run . -no-ambiguous   # 去掉 0O1lI 这类抄写时容易看错的字符
+go run . -exclude "@#$"  # 手动排除某些字符（有些系统不收）
+go run . -words 4        # 易记口令：ocean-tiger-amber-piano-37
+go run . -quiet          # 只打印密码，方便 | clip
 ```
 
 ## 参数
@@ -21,9 +25,15 @@ go run . -only-digits    # 只出数字（验证码）
 | `-len` | 16 | 密码长度 |
 | `-count` | 1 | 一次生成几条 |
 | `-symbols` | true | 是否包含符号 |
+| `-no-symbols` | false | 不包含符号 |
 | `-no-upper` | false | 不包含大写字母 |
+| `-no-digits` | false | 不包含数字 |
 | `-only-digits` | false | 只生成数字 |
-| `-no-upper` | false | 不包含大写字母（小写/数字/符号仍每类必含） |
+| `-no-ambiguous` | false | 剔除 `0Oo1lI` 及易混淆标点 |
+| `-exclude` | 空 | 额外排除的字符 |
+| `-words` | 0 | 大于 0 时改用口令模式，生成 N 个单词的易记口令 |
+| `-sep` | `-` | 口令模式的单词分隔符 |
+| `-quiet` | false | 只输出密码，不打印强度信息 |
 
 ## 真实随机 & 每类必含
 
@@ -31,10 +41,25 @@ go run . -only-digits    # 只出数字（验证码）
 - 生成的密码**保证每个字符类（小写 / 大写 / 数字 / 符号）至少出现一次**，再用 Fisher–Yates 原地打乱，避免某些类完全抽不到的情况（普通纯随机可能整条都是小写）。
 - 强度按**真实信息熵**估算：`长度 × log2(字符集大小)` 位，比粗略的"长度×种类数"更准确。
 
+## 排除字符时的坑
+
+`-exclude` / `-no-ambiguous` 不只是从全集里挖字符，还要同步从"每类必含"的类里挖。
+否则某个类被挖空后，取随机下标就会越界 panic。被挖空的类会整类丢掉，不再参与"必含"约束。
+
+## 口令模式
+
+`-words N` 从内置词表随机取 N 个词拼起来，末尾补两位数字（绕开"必须含数字"的策略）。
+熵按 `N × log2(词表大小) + log2(100)` 估算。
+
+注意内置词表只有 32 个词，每个词仅贡献 5 bits，4 个词加两位数字也才 26.6 bits，评级是"弱"。
+这个模式适合生成好记的临时口令，**不要拿来当主密码**；真要靠口令扛事，词表至少得上千词
+（如 Diceware 的 7776 词，每词 12.9 bits）。要高强度还是用默认的字符模式。
+
 ## 示例输出
 
 ```text
 aZ3$kL9@qW2#mN7p  [强, 95.3 bits]
+koala-yacht-mango-apple-83  [弱, 26.6 bits]
 ```
 
 方括号里依次是强度等级与估算熵位（仅供参考，非严谨评分）。
